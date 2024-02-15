@@ -4,15 +4,19 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 )
 
+type seed struct {
+	sourceRangeStart int
+	rangeLength      int
+}
+
 type input struct {
-	destinationRangeStart string
-	sourceRangeStart      string
-	rangeLength           string
+	destinationRangeStart int
+	sourceRangeStart      int
+	rangeLength           int
 }
 
 type automata struct {
@@ -25,8 +29,8 @@ type automata struct {
 	humidityToLocation    []input
 }
 
-func initRecept(s *bufio.Scanner, r *automata) []string {
-	var seeds []string
+func initRecept(s *bufio.Scanner, r *automata) []seed {
+	var seeds []seed
 	var index string
 	for s.Scan() {
 		line := s.Text()
@@ -34,7 +38,15 @@ func initRecept(s *bufio.Scanner, r *automata) []string {
 
 		switch split[0] {
 		case "seeds":
-			seeds = strings.Split(split[1], " ")
+			inputs := strings.Split(split[1], " ")
+			for i := 0; i < len(inputs)/2; i++ {
+				s, _ := strconv.Atoi(inputs[i*2+1])
+				l, _ := strconv.Atoi(inputs[i*2+2])
+				seeds = append(seeds, seed{
+					sourceRangeStart: s,
+					rangeLength:      l,
+				})
+			}
 		case "":
 		default:
 			if strings.Contains(split[0], "map") {
@@ -44,48 +56,51 @@ func initRecept(s *bufio.Scanner, r *automata) []string {
 			}
 
 			inputs := strings.Split(split[0], " ")
+			drs, _ := strconv.Atoi(inputs[0])
+			srs, _ := strconv.Atoi(inputs[1])
+			rl, _ := strconv.Atoi(inputs[2])
 			switch index {
 			case "seed-to-soil":
 				r.seedToSoil = append(r.seedToSoil, input{
-					destinationRangeStart: inputs[0],
-					sourceRangeStart:      inputs[1],
-					rangeLength:           inputs[2],
+					destinationRangeStart: drs,
+					sourceRangeStart:      srs,
+					rangeLength:           rl,
 				})
 			case "soil-to-fertilizer":
 				r.soilToFertilizer = append(r.soilToFertilizer, input{
-					destinationRangeStart: inputs[0],
-					sourceRangeStart:      inputs[1],
-					rangeLength:           inputs[2],
+					destinationRangeStart: drs,
+					sourceRangeStart:      srs,
+					rangeLength:           rl,
 				})
 			case "fertilizer-to-water":
 				r.fertilizerToWater = append(r.fertilizerToWater, input{
-					destinationRangeStart: inputs[0],
-					sourceRangeStart:      inputs[1],
-					rangeLength:           inputs[2],
+					destinationRangeStart: drs,
+					sourceRangeStart:      srs,
+					rangeLength:           rl,
 				})
 			case "water-to-light":
 				r.waterToLight = append(r.waterToLight, input{
-					destinationRangeStart: inputs[0],
-					sourceRangeStart:      inputs[1],
-					rangeLength:           inputs[2],
+					destinationRangeStart: drs,
+					sourceRangeStart:      srs,
+					rangeLength:           rl,
 				})
 			case "light-to-temperature":
 				r.lightToTemperature = append(r.lightToTemperature, input{
-					destinationRangeStart: inputs[0],
-					sourceRangeStart:      inputs[1],
-					rangeLength:           inputs[2],
+					destinationRangeStart: drs,
+					sourceRangeStart:      srs,
+					rangeLength:           rl,
 				})
 			case "temperature-to-humidity":
 				r.temperatureToHumidity = append(r.temperatureToHumidity, input{
-					destinationRangeStart: inputs[0],
-					sourceRangeStart:      inputs[1],
-					rangeLength:           inputs[2],
+					destinationRangeStart: drs,
+					sourceRangeStart:      srs,
+					rangeLength:           rl,
 				})
 			case "humidity-to-location":
 				r.humidityToLocation = append(r.humidityToLocation, input{
-					destinationRangeStart: inputs[0],
-					sourceRangeStart:      inputs[1],
-					rangeLength:           inputs[2],
+					destinationRangeStart: drs,
+					sourceRangeStart:      srs,
+					rangeLength:           rl,
 				})
 			default:
 				fmt.Println(index)
@@ -96,30 +111,59 @@ func initRecept(s *bufio.Scanner, r *automata) []string {
 	return seeds
 }
 
-func getCorrespondingNumber(s string, r []input) string {
-	sn, _ := strconv.Atoi(s)
+func getCorrespondingNumber(sn int, r []input) int {
 	for _, input := range r {
-		drs, _ := strconv.Atoi(input.destinationRangeStart)
-		srs, _ := strconv.Atoi(input.sourceRangeStart)
-		l, _ := strconv.Atoi(input.rangeLength)
-		if sn < srs {
+		if sn < input.sourceRangeStart {
 			continue
 		}
-		if sn >= srs+l {
+		if sn >= input.sourceRangeStart+input.rangeLength {
 			continue
 		}
 
-		dn := drs + (sn - srs)
-
-		return strconv.Itoa(dn)
+		return input.destinationRangeStart + (sn - input.sourceRangeStart)
 	}
 
-	return s
+	return sn
+}
+
+func worker(id int, jobs <-chan int, results chan<- int, r *automata) {
+	for j := range jobs {
+		soilNumber := getCorrespondingNumber(j, r.seedToSoil)
+		fertilizerNumber := getCorrespondingNumber(soilNumber, r.soilToFertilizer)
+		waterNumber := getCorrespondingNumber(fertilizerNumber, r.fertilizerToWater)
+		lightNumber := getCorrespondingNumber(waterNumber, r.waterToLight)
+		temperatureNumber := getCorrespondingNumber(lightNumber, r.lightToTemperature)
+		humidityNumber := getCorrespondingNumber(temperatureNumber, r.temperatureToHumidity)
+		results <- getCorrespondingNumber(humidityNumber, r.humidityToLocation)
+	}
+}
+
+func getLowerFromRange(s seed, r automata) int {
+	jobs := make(chan int, s.rangeLength)
+	results := make(chan int, s.rangeLength)
+
+	for w := 1; w <= 10; w++ {
+		go worker(w, jobs, results, &r)
+	}
+	for j := s.sourceRangeStart; j < s.sourceRangeStart+s.rangeLength; j++ {
+		jobs <- j
+	}
+	close(jobs)
+
+	min := 0
+	for a := 1; a <= s.rangeLength; a++ {
+		r := <-results
+		if min == 0 {
+			min = r
+		} else if min > r {
+			min = r
+		}
+	}
+	return min
 }
 
 func main() {
-	sum := 0
-
+	// f, err := os.Open("input.txt")
 	f, err := os.Open("input1.txt")
 	if err != nil {
 		panic(err)
@@ -129,24 +173,14 @@ func main() {
 	scanner := bufio.NewScanner(f)
 	var recept automata
 	seeds := initRecept(scanner, &recept)
-	var locations []int
+	min := 0
 	for _, s := range seeds {
-		if s == "" {
-			continue
+		r := getLowerFromRange(s, recept)
+		if min == 0 {
+			min = r
+		} else if min > r {
+			min = r
 		}
-
-		soilNumber := getCorrespondingNumber(s, recept.seedToSoil)
-		fertilizerNumber := getCorrespondingNumber(soilNumber, recept.soilToFertilizer)
-		waterNumber := getCorrespondingNumber(fertilizerNumber, recept.fertilizerToWater)
-		lightNumber := getCorrespondingNumber(waterNumber, recept.waterToLight)
-		temperatureNumber := getCorrespondingNumber(lightNumber, recept.lightToTemperature)
-		humidityNumber := getCorrespondingNumber(temperatureNumber, recept.temperatureToHumidity)
-		location, _ := strconv.Atoi(getCorrespondingNumber(humidityNumber, recept.humidityToLocation))
-		locations = append(locations, location)
 	}
-
-	slices.Sort(locations)
-
-	fmt.Println(locations[0])
-	fmt.Println(fmt.Sprintf("Sum =  %d", sum))
+	fmt.Println(min)
 }
